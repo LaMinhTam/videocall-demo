@@ -1,0 +1,325 @@
+<!-- public/simple.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simple Video Call with Drawing</title>
+  <!-- Socket.IO client -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.1/socket.io.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: #f5f5f5;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+    
+    .container {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+    
+    .room-info {
+      background-color: #333;
+      color: white;
+      padding: 10px;
+      text-align: center;
+    }
+    
+    .content {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+    
+    .videos-container {
+      flex: 2;
+      display: flex;
+      flex-wrap: wrap;
+      background-color: #1a1a1a;
+      overflow: auto;
+      padding: 5px;
+    }
+    
+    .videos-container video {
+      margin: 5px;
+      border-radius: 5px;
+      background-color: #333;
+      transform: rotateY(180deg);
+      -webkit-transform: rotateY(180deg);
+      -moz-transform: rotateY(180deg);
+      object-fit: cover;
+    }
+    
+    .drawing-container {
+      flex: 1;
+      min-width: 300px;
+      background-color: white;
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .drawing-toolbar {
+      background-color: #eee;
+      padding: 10px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    
+    .color-picker {
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      border: none;
+      cursor: pointer;
+    }
+    
+    .width-slider {
+      flex: 1;
+    }
+    
+    .clear-button {
+      background-color: #ff4d4d;
+      color: white;
+      border: none;
+      padding: 5px 10px;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    
+    .clear-button:hover {
+      background-color: #ff3333;
+    }
+    
+    .drawing-canvas {
+      flex: 1;
+      background-color: white;
+      touch-action: none;
+    }
+    
+    .join-form {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.8);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 100;
+    }
+    
+    .join-box {
+      background-color: white;
+      padding: 30px;
+      border-radius: 10px;
+      width: 300px;
+      text-align: center;
+    }
+    
+    .join-box h2 {
+      margin-top: 0;
+    }
+    
+    .join-box input {
+      width: 100%;
+      padding: 10px;
+      margin: 10px 0;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+    }
+    
+    .join-box button {
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    
+    .join-box button:hover {
+      background-color: #3e8e41;
+    }
+    
+    @media (max-width: 768px) {
+      .content {
+        flex-direction: column;
+      }
+      
+      .drawing-container {
+        min-width: 100%;
+        height: 300px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="room-info">
+      <h1>Simple Video Call with Drawing</h1>
+      <p>Room: <span id="room-id"></span></p>
+    </div>
+    
+    <div class="content">
+      <div id="videos" class="videos-container">
+        <!-- Videos will be dynamically added here -->
+      </div>
+      
+      <div class="drawing-container">
+        <div class="drawing-toolbar">
+          <input type="color" class="color-picker" id="color-picker" value="#000000">
+          <input type="range" class="width-slider" id="width-slider" min="1" max="20" value="5">
+          <button class="clear-button" id="clear-button">Clear</button>
+        </div>
+        <canvas id="drawing-canvas" class="drawing-canvas"></canvas>
+      </div>
+    </div>
+  </div>
+  
+  <div class="join-form" id="join-form">
+    <div class="join-box">
+      <h2>Join a Room</h2>
+      <input type="text" id="room-input" placeholder="Enter room name">
+      <button id="join-button">Join</button>
+    </div>
+  </div>
+  
+  <!-- Include our client script -->
+  <script src="simple-mediasoup-client.js"></script>
+  <script>
+    // DOM elements
+    const joinForm = document.getElementById('join-form');
+    const roomInput = document.getElementById('room-input');
+    const joinButton = document.getElementById('join-button');
+    const roomIdElement = document.getElementById('room-id');
+    const videosContainer = document.getElementById('videos');
+    const drawingCanvas = document.getElementById('drawing-canvas');
+    const colorPicker = document.getElementById('color-picker');
+    const widthSlider = document.getElementById('width-slider');
+    const clearButton = document.getElementById('clear-button');
+
+    // Global variables
+    let client = null;
+
+    // Initialize the application
+    function init() {
+      // Set up canvas size
+      resizeCanvas();
+      window.addEventListener('resize', resizeCanvas);
+      
+      // Event listeners
+      joinButton.addEventListener('click', joinRoom);
+      roomInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          joinRoom();
+        }
+      });
+      
+      colorPicker.addEventListener('change', () => {
+        if (client) {
+          client.setDrawColor(colorPicker.value);
+        }
+      });
+      
+      widthSlider.addEventListener('input', () => {
+        if (client) {
+          client.setDrawWidth(widthSlider.value);
+        }
+      });
+      
+      clearButton.addEventListener('click', () => {
+        if (client) {
+          client.clearCanvas();
+        }
+      });
+      
+      // Check if there's a room in the URL
+      const urlParams = new URLSearchParams(window.location.search);
+      const roomFromUrl = urlParams.get('room');
+      
+      if (roomFromUrl) {
+        roomInput.value = roomFromUrl;
+        joinRoom();
+      }
+    }
+
+    // Resize canvas to fit container
+    function resizeCanvas() {
+      const container = drawingCanvas.parentElement;
+      drawingCanvas.width = container.clientWidth;
+      drawingCanvas.height = container.clientHeight;
+      
+      // Reset drawing context in case we already have a client
+      if (client) {
+        client.setDrawColor(colorPicker.value);
+        client.setDrawWidth(widthSlider.value);
+      }
+    }
+
+    // Join a room
+    async function joinRoom() {
+      const roomId = roomInput.value.trim();
+      
+      if (!roomId) {
+        alert('Please enter a room name');
+        return;
+      }
+      
+      // Update URL with room parameter
+      const newUrl = `${window.location.origin}${window.location.pathname}?room=${roomId}`;
+      window.history.pushState({ path: newUrl }, '', newUrl);
+      
+      // Show room ID in the header
+      roomIdElement.textContent = roomId;
+      
+      // Hide join form
+      joinForm.style.display = 'none';
+      
+      // Initialize client
+      client = new SimpleMediasoupClient({
+        roomId,
+        debug: true,
+        canvas: drawingCanvas,
+        drawColor: colorPicker.value,
+        drawWidth: parseInt(widthSlider.value),
+        videosContainer,
+        onConnect: () => {
+          console.log('Connected to room:', roomId);
+        },
+        onDisconnect: () => {
+          console.log('Disconnected from room');
+          // Show join form again
+          joinForm.style.display = 'flex';
+        },
+        onPeerJoined: (peerId) => {
+          console.log('Peer joined:', peerId);
+        },
+        onPeerLeft: (peerId) => {
+          console.log('Peer left:', peerId);
+        }
+      });
+      
+      try {
+        await client.init();
+      } catch (error) {
+        console.error('Error initializing client:', error);
+        alert(`Error joining room: ${error.message}`);
+        joinForm.style.display = 'flex';
+      }
+    }
+
+    // Start the application when the page loads
+    window.addEventListener('load', init);
+  </script>
+</body>
+</html>
