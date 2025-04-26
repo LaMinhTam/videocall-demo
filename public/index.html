@@ -1,10 +1,10 @@
-<!-- public/simple.html -->
+<!-- public/advanced-drawing-index.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Simple Video Call with Drawing</title>
+  <title>Advanced Video Call with Drawing</title>
   <!-- Socket.IO client -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.1/socket.io.min.js"></script>
   <style>
@@ -39,7 +39,7 @@
     }
     
     .videos-container {
-      flex: 2;
+      flex: 1;
       display: flex;
       flex-wrap: wrap;
       background-color: #1a1a1a;
@@ -58,8 +58,8 @@
     }
     
     .drawing-container {
-      flex: 1;
-      min-width: 300px;
+      flex: 2;
+      min-width: 500px;
       background-color: white;
       display: flex;
       flex-direction: column;
@@ -71,6 +71,20 @@
       display: flex;
       gap: 10px;
       align-items: center;
+      flex-wrap: wrap;
+      border-bottom: 1px solid #ccc;
+    }
+    
+    .toolbar-section {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 5px;
+      border-right: 1px solid #ccc;
+    }
+    
+    .toolbar-section:last-child {
+      border-right: none;
     }
     
     .color-picker {
@@ -81,27 +95,165 @@
       cursor: pointer;
     }
     
-    .width-slider {
-      flex: 1;
+    .slider-container {
+      display: flex;
+      align-items: center;
+      gap: 5px;
     }
     
-    .clear-button {
-      background-color: #ff4d4d;
+    .slider-label {
+      font-size: 12px;
+      width: 50px;
+    }
+    
+    .slider {
+      width: 100px;
+    }
+    
+    .brush-button {
+      width: 40px;
+      height: 40px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      background-color: white;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 20px;
+    }
+    
+    .brush-button.active {
+      background-color: #007bff;
+      color: white;
+      border-color: #0056b3;
+    }
+    
+    .button {
+      background-color: #007bff;
       color: white;
       border: none;
       padding: 5px 10px;
       border-radius: 3px;
       cursor: pointer;
+      font-size: 14px;
+    }
+    
+    .button:hover {
+      background-color: #0056b3;
+    }
+    
+    .clear-button {
+      background-color: #ff4d4d;
     }
     
     .clear-button:hover {
       background-color: #ff3333;
     }
     
-    .drawing-canvas {
+    .drawing-workspace {
+      display: flex;
       flex: 1;
+      overflow: hidden;
+    }
+    
+    .layers-panel {
+      width: 200px;
+      background-color: #f8f8f8;
+      border-right: 1px solid #ddd;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    
+    .layers-header {
+      padding: 10px;
+      background-color: #e8e8e8;
+      font-weight: bold;
+      border-bottom: 1px solid #ddd;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .layers-controls {
+      display: flex;
+      gap: 5px;
+    }
+    
+    .layer-control-button {
+      width: 24px;
+      height: 24px;
+      border: 1px solid #ccc;
+      border-radius: 3px;
       background-color: white;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 14px;
+    }
+    
+    .layers-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 5px;
+    }
+    
+    .layer-item {
+      padding: 5px;
+      margin-bottom: 5px;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+      background-color: white;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    
+    .layer-item.active {
+      background-color: #e3f2fd;
+      border-color: #90caf9;
+    }
+    
+    .layer-visibility {
+      cursor: pointer;
+      opacity: 0.5;
+    }
+    
+    .layer-visibility.visible {
+      opacity: 1;
+    }
+    
+    .layer-name {
+      flex: 1;
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    
+    .drawing-canvas-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+    
+    .drawing-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
       touch-action: none;
+      background-color: white;
+      background-image: linear-gradient(45deg, #f0f0f0 25%, transparent 25%),
+                        linear-gradient(-45deg, #f0f0f0 25%, transparent 25%),
+                        linear-gradient(45deg, transparent 75%, #f0f0f0 75%),
+                        linear-gradient(-45deg, transparent 75%, #f0f0f0 75%);
+      background-size: 20px 20px;
+      background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
     }
     
     .join-form {
@@ -151,14 +303,35 @@
       background-color: #3e8e41;
     }
     
-    @media (max-width: 768px) {
+    @media (max-width: 1024px) {
       .content {
         flex-direction: column;
       }
       
       .drawing-container {
         min-width: 100%;
-        height: 300px;
+        height: 70vh;
+      }
+      
+      .videos-container {
+        height: 30vh;
+      }
+      
+      .layers-panel {
+        width: 150px;
+      }
+    }
+    
+    @media (max-width: 768px) {
+      .drawing-workspace {
+        flex-direction: column;
+      }
+      
+      .layers-panel {
+        width: 100%;
+        height: 150px;
+        border-right: none;
+        border-bottom: 1px solid #ddd;
       }
     }
   </style>
@@ -166,7 +339,7 @@
 <body>
   <div class="container">
     <div class="room-info">
-      <h1>Simple Video Call with Drawing</h1>
+      <h1>Advanced Video Call with Drawing</h1>
       <p>Room: <span id="room-id"></span></p>
     </div>
     
@@ -177,11 +350,70 @@
       
       <div class="drawing-container">
         <div class="drawing-toolbar">
-          <input type="color" class="color-picker" id="color-picker" value="#000000">
-          <input type="range" class="width-slider" id="width-slider" min="1" max="20" value="5">
-          <button class="clear-button" id="clear-button">Clear</button>
+          <div class="toolbar-section">
+            <input type="color" class="color-picker" id="color-picker" value="#000000">
+            <div class="slider-container">
+              <span class="slider-label">Size:</span>
+              <input type="range" class="slider" id="size-slider" min="1" max="50" value="5">
+            </div>
+            <div class="slider-container">
+              <span class="slider-label">Opacity:</span>
+              <input type="range" class="slider" id="opacity-slider" min="0" max="100" value="100">
+            </div>
+          </div>
+          
+          <div class="toolbar-section">
+            <button class="brush-button active" id="pen-button" title="Pen">✏️</button>
+            <button class="brush-button" id="pencil-button" title="Pencil">📝</button>
+            <button class="brush-button" id="brush-button" title="Brush">🖌️</button>
+            <button class="brush-button" id="marker-button" title="Marker">🖍️</button>
+            <button class="brush-button" id="airbrush-button" title="Airbrush">💨</button>
+            <button class="brush-button" id="eraser-button" title="Eraser">🧽</button>
+          </div>
+          
+          <div class="toolbar-section">
+            <div class="slider-container">
+              <span class="slider-label">Smooth:</span>
+              <input type="range" class="slider" id="smooth-slider" min="0" max="20" value="8">
+            </div>
+            <select id="blend-mode" title="Blend Mode">
+              <option value="source-over">Normal</option>
+              <option value="multiply">Multiply</option>
+              <option value="screen">Screen</option>
+              <option value="overlay">Overlay</option>
+              <option value="darken">Darken</option>
+              <option value="lighten">Lighten</option>
+            </select>
+          </div>
+          
+          <div class="toolbar-section">
+            <button class="button" id="undo-button" title="Undo">↩️ Undo</button>
+            <button class="button" id="redo-button" title="Redo">↪️ Redo</button>
+            <button class="button clear-button" id="clear-button" title="Clear Layer">Clear</button>
+            <button class="button" id="save-button" title="Save Drawing">Save</button>
+          </div>
         </div>
-        <canvas id="drawing-canvas" class="drawing-canvas"></canvas>
+        
+        <div class="drawing-workspace">
+          <div class="layers-panel">
+            <div class="layers-header">
+              <span>Layers</span>
+              <div class="layers-controls">
+                <button class="layer-control-button" id="add-layer-button" title="Add Layer">+</button>
+                <button class="layer-control-button" id="remove-layer-button" title="Remove Layer">-</button>
+                <button class="layer-control-button" id="move-up-button" title="Move Layer Up">↑</button>
+                <button class="layer-control-button" id="move-down-button" title="Move Layer Down">↓</button>
+              </div>
+            </div>
+            <div class="layers-list" id="layers-list">
+              <!-- Layers will be dynamically added here -->
+            </div>
+          </div>
+          
+          <div class="drawing-canvas-container">
+            <canvas id="drawing-canvas" class="drawing-canvas"></canvas>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -194,8 +426,9 @@
     </div>
   </div>
   
-  <!-- Include our client script -->
+  <!-- Include client scripts -->
   <script src="mediasoup-client.js"></script>
+  <script src="AdvancedDrawingModule.js"></script>
   <script>
     // DOM elements
     const joinForm = document.getElementById('join-form');
@@ -205,11 +438,33 @@
     const videosContainer = document.getElementById('videos');
     const drawingCanvas = document.getElementById('drawing-canvas');
     const colorPicker = document.getElementById('color-picker');
-    const widthSlider = document.getElementById('width-slider');
+    const sizeSlider = document.getElementById('size-slider');
+    const opacitySlider = document.getElementById('opacity-slider');
+    const smoothSlider = document.getElementById('smooth-slider');
+    const blendModeSelect = document.getElementById('blend-mode');
     const clearButton = document.getElementById('clear-button');
+    const undoButton = document.getElementById('undo-button');
+    const redoButton = document.getElementById('redo-button');
+    const saveButton = document.getElementById('save-button');
+    const addLayerButton = document.getElementById('add-layer-button');
+    const removeLayerButton = document.getElementById('remove-layer-button');
+    const moveUpButton = document.getElementById('move-up-button');
+    const moveDownButton = document.getElementById('move-down-button');
+    const layersList = document.getElementById('layers-list');
+    
+    // Brush buttons
+    const brushButtons = {
+      pen: document.getElementById('pen-button'),
+      pencil: document.getElementById('pencil-button'),
+      brush: document.getElementById('brush-button'),
+      marker: document.getElementById('marker-button'),
+      airbrush: document.getElementById('airbrush-button'),
+      eraser: document.getElementById('eraser-button')
+    };
 
     // Global variables
-    let client = null;
+    let mediasoupClient = null;
+    let drawingModule = null;
 
     // Initialize the application
     function init() {
@@ -225,21 +480,113 @@
         }
       });
       
+      // Tool settings event listeners
       colorPicker.addEventListener('change', () => {
-        if (client) {
-          client.setDrawColor(colorPicker.value);
+        if (drawingModule) {
+          drawingModule.setColor(colorPicker.value);
         }
       });
       
-      widthSlider.addEventListener('input', () => {
-        if (client) {
-          client.setDrawWidth(widthSlider.value);
+      sizeSlider.addEventListener('input', () => {
+        if (drawingModule) {
+          drawingModule.setSize(parseInt(sizeSlider.value));
         }
       });
       
+      opacitySlider.addEventListener('input', () => {
+        if (drawingModule) {
+          drawingModule.setOpacity(parseInt(opacitySlider.value) / 100);
+        }
+      });
+      
+      smoothSlider.addEventListener('input', () => {
+        if (drawingModule) {
+          drawingModule.setStabilizer(parseInt(smoothSlider.value));
+        }
+      });
+      
+      blendModeSelect.addEventListener('change', () => {
+        if (drawingModule) {
+          drawingModule.setBlendMode(blendModeSelect.value);
+        }
+      });
+      
+      // Brush buttons event listeners
+      for (const [brushType, button] of Object.entries(brushButtons)) {
+        button.addEventListener('click', () => {
+          if (drawingModule) {
+            // Update active brush
+            drawingModule.setBrushType(brushType);
+            
+            // Update UI
+            for (const btn of Object.values(brushButtons)) {
+              btn.classList.remove('active');
+            }
+            button.classList.add('active');
+          }
+        });
+      }
+      
+      // Action buttons event listeners
       clearButton.addEventListener('click', () => {
-        if (client) {
-          client.clearCanvas();
+        if (drawingModule) {
+          drawingModule.clear();
+        }
+      });
+      
+      undoButton.addEventListener('click', () => {
+        if (drawingModule) {
+          drawingModule.undo();
+        }
+      });
+      
+      redoButton.addEventListener('click', () => {
+        if (drawingModule) {
+          drawingModule.redo();
+        }
+      });
+      
+      saveButton.addEventListener('click', () => {
+        if (drawingModule) {
+          const dataUrl = drawingModule.exportAsImage();
+          const link = document.createElement('a');
+          link.href = dataUrl;
+          link.download = `drawing-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.png`;
+          link.click();
+        }
+      });
+      
+      // Layer management event listeners
+      addLayerButton.addEventListener('click', () => {
+        if (drawingModule) {
+          const layerName = prompt('Enter layer name:', `Layer ${drawingModule.layers.length + 1}`);
+          if (layerName) {
+            const layerIndex = drawingModule.addLayer(layerName);
+            updateLayersUI();
+          }
+        }
+      });
+      
+      removeLayerButton.addEventListener('click', () => {
+        if (drawingModule) {
+          if (confirm('Are you sure you want to remove the current layer?')) {
+            drawingModule.removeLayer(drawingModule.currentLayerIndex);
+            updateLayersUI();
+          }
+        }
+      });
+      
+      moveUpButton.addEventListener('click', () => {
+        if (drawingModule) {
+          drawingModule.moveLayerUp(drawingModule.currentLayerIndex);
+          updateLayersUI();
+        }
+      });
+      
+      moveDownButton.addEventListener('click', () => {
+        if (drawingModule) {
+          drawingModule.moveLayerDown(drawingModule.currentLayerIndex);
+          updateLayersUI();
         }
       });
       
@@ -259,10 +606,50 @@
       drawingCanvas.width = container.clientWidth;
       drawingCanvas.height = container.clientHeight;
       
-      // Reset drawing context in case we already have a client
-      if (client) {
-        client.setDrawColor(colorPicker.value);
-        client.setDrawWidth(widthSlider.value);
+      // Reset drawing context if we already have a drawingModule
+      if (drawingModule) {
+        // Refresh context and redraw canvas
+        drawingModule._redrawCanvas();
+      }
+    }
+
+    // Update layers UI
+    function updateLayersUI() {
+      if (!drawingModule) return;
+      
+      // Clear current layers list
+      layersList.innerHTML = '';
+      
+      // Add layers in reverse order (top to bottom)
+      for (let i = drawingModule.layers.length - 1; i >= 0; i--) {
+        const layer = drawingModule.layers[i];
+        
+        const layerItem = document.createElement('div');
+        layerItem.className = `layer-item ${i === drawingModule.currentLayerIndex ? 'active' : ''}`;
+        layerItem.dataset.index = i;
+        
+        const visibilityIcon = document.createElement('span');
+        visibilityIcon.className = `layer-visibility ${layer.visible ? 'visible' : ''}`;
+        visibilityIcon.innerHTML = layer.visible ? '👁️' : '👁️‍🗨️';
+        visibilityIcon.addEventListener('click', (e) => {
+          e.stopPropagation();
+          drawingModule.setLayerVisibility(i, !layer.visible);
+          updateLayersUI();
+        });
+        
+        const layerName = document.createElement('span');
+        layerName.className = 'layer-name';
+        layerName.textContent = layer.name;
+        
+        layerItem.appendChild(visibilityIcon);
+        layerItem.appendChild(layerName);
+        
+        layerItem.addEventListener('click', () => {
+          drawingModule.selectLayer(i);
+          updateLayersUI();
+        });
+        
+        layersList.appendChild(layerItem);
       }
     }
 
@@ -285,13 +672,11 @@
       // Hide join form
       joinForm.style.display = 'none';
       
-      // Initialize client
-      client = new MediasoupClient({
+      // Initialize MediaSoup client
+      mediasoupClient = new MediasoupClient({
         roomId,
         debug: true,
         canvas: drawingCanvas,
-        drawColor: colorPicker.value,
-        drawWidth: parseInt(widthSlider.value),
         videosContainer,
         onConnect: () => {
           console.log('Connected to room:', roomId);
@@ -310,9 +695,24 @@
       });
       
       try {
-        await client.init();
+        await mediasoupClient.init();
+        
+        // Create drawing module
+        drawingModule = new AdvancedDrawingModule({
+          canvas: drawingCanvas,
+          socket: mediasoupClient.socket,
+          roomId,
+          debug: true,
+          color: colorPicker.value,
+          size: parseInt(sizeSlider.value),
+          opacity: parseInt(opacitySlider.value) / 100
+        });
+        
+        // Initialize UI
+        updateLayersUI();
+        
       } catch (error) {
-        console.error('Error initializing client:', error);
+        console.error('Error initializing MediaSoup client:', error);
         alert(`Error joining room: ${error.message}`);
         joinForm.style.display = 'flex';
       }
