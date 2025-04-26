@@ -10,42 +10,156 @@ import { Room, Track } from 'livekit-client';
 import '@livekit/components-styles';
 import { useEffect, useState } from 'react';
 
+// Update these with your values
 const serverUrl = import.meta.env.VITE_LK_SERVER_URL;
-const token = import.meta.env.VITE_LK_TOKEN;
+const tokenServerUrl = import.meta.env.VITE_TOKEN_SERVER_URL || 'http://localhost:3000';
 
 export default function App() {
   const [room] = useState(() => new Room({
-    // Optimize video quality for each participant's screen
     adaptiveStream: true,
-    // Enable automatic audio/video quality optimization
     dynacast: true,
   }));
+  const [identity, setIdentity] = useState('');
+  const [roomName, setRoomName] = useState('default-room');
+  const [isConnected, setIsConnected] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
-  // Connect to room
-  useEffect(() => {
-    let mounted = true;
-    
-    const connect = async () => {
-      if (mounted) {
-        await room.connect(serverUrl, token);
+  // Get a token from our backend
+  const getToken = async (username, room) => {
+    try {
+      setIsLoading(true);
+      
+      const response = await fetch(`${tokenServerUrl}/api/get-token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          identity: username,
+          roomName: room
+        }),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to get token');
       }
-    };
-    connect();
+      
+      const data = await response.json();
+      return data.token;
+    } catch (error) {
+      console.error('Error getting token:', error);
+      alert('Failed to get access token: ' + (error.message || ''));
+      return null;
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
+  const handleConnect = async (e) => {
+    e.preventDefault();
+    
+    if (!identity.trim()) {
+      alert('Please enter your name');
+      return;
+    }
+    
+    if (!roomName.trim()) {
+      alert('Please enter a room name');
+      return;
+    }
+    
+    try {
+      // Get a unique token for this identity and room
+      const token = await getToken(identity, roomName);
+      
+      if (!token) {
+        return; // Error already shown in getToken
+      }
+      
+      // Connect to LiveKit room
+      await room.connect(serverUrl, token);
+      setIsConnected(true);
+    } catch (error) {
+      console.error('Error connecting to room:', error);
+      alert('Failed to connect: ' + error.message);
+    }
+  };
+
+  const handleDisconnect = () => {
+    room.disconnect();
+    setIsConnected(false);
+  };
+
+  useEffect(() => {
     return () => {
-      mounted = false;
       room.disconnect();
     };
   }, [room]);
 
+  if (!isConnected) {
+    return (
+      <div style={{ 
+        height: '100vh', 
+        display: 'flex', 
+        justifyContent: 'center', 
+        alignItems: 'center',
+        flexDirection: 'column'
+      }}>
+        <h1>Join Meeting</h1>
+        <form onSubmit={handleConnect} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <input
+            type="text"
+            placeholder="Enter your name"
+            value={identity}
+            onChange={(e) => setIdentity(e.target.value)}
+            style={{ padding: '10px', width: '300px' }}
+          />
+          <input
+            type="text"
+            placeholder="Enter room name"
+            value={roomName}
+            onChange={(e) => setRoomName(e.target.value)}
+            style={{ padding: '10px', width: '300px' }}
+          />
+          <button 
+            type="submit" 
+            disabled={isLoading}
+            style={{ 
+              padding: '10px', 
+              backgroundColor: '#4CAF50', 
+              color: 'white', 
+              border: 'none',
+              cursor: isLoading ? 'not-allowed' : 'pointer'
+            }}
+          >
+            {isLoading ? 'Connecting...' : 'Join Room'}
+          </button>
+        </form>
+      </div>
+    );
+  }
+
   return (
     <RoomContext.Provider value={room}>
       <div data-lk-theme="default" style={{ height: '100vh' }}>
-        {/* Your custom component with basic video conferencing functionality. */}
+        <div style={{ padding: '10px', background: '#f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <p style={{ margin: '0' }}>Connected as: <strong>{identity}</strong> in room: <strong>{roomName}</strong></p>
+          <button 
+            onClick={handleDisconnect}
+            style={{ 
+              padding: '5px 10px', 
+              backgroundColor: '#f44336', 
+              color: 'white', 
+              border: 'none',
+              cursor: 'pointer'
+            }}
+          >
+            Leave Room
+          </button>
+        </div>
         <MyVideoConference />
-        {/* The RoomAudioRenderer takes care of room-wide audio for you. */}
         <RoomAudioRenderer />
-        {/* Controls for the user to start/stop audio, video, and screen share tracks */}
         <ControlBar />
       </div>
     </RoomContext.Provider>
@@ -53,8 +167,6 @@ export default function App() {
 }
 
 function MyVideoConference() {
-  // `useTracks` returns all camera and screen share tracks. If a user
-  // joins without a published camera track, a placeholder track is returned.
   const tracks = useTracks(
     [
       { source: Track.Source.Camera, withPlaceholder: true },
@@ -63,9 +175,7 @@ function MyVideoConference() {
     { onlySubscribed: false },
   );
   return (
-    <GridLayout tracks={tracks} style={{ height: 'calc(100vh - var(--lk-control-bar-height))' }}>
-      {/* The GridLayout accepts zero or one child. The child is used
-      as a template to render all passed in tracks. */}
+    <GridLayout tracks={tracks} style={{ height: 'calc(100vh - var(--lk-control-bar-height) - 50px)' }}>
       <ParticipantTile />
     </GridLayout>
   );
