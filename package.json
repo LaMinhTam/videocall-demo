@@ -4,7 +4,7 @@
     "description": "Video call application with drawing capabilities using MediaSoup",
     "main": "server.js",
     "scripts": {
-      "start": "node server.js",
+      "start": "node server",
       "dev": "nodemon server.js"
     },
     "dependencies": {

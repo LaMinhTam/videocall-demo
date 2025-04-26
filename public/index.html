@@ -195,7 +195,7 @@
   </div>
   
   <!-- Include our client script -->
-  <script src="simple-mediasoup-client.js"></script>
+  <script src="mediasoup-client.js"></script>
   <script>
     // DOM elements
     const joinForm = document.getElementById('join-form');
@@ -286,7 +286,7 @@
       joinForm.style.display = 'none';
       
       // Initialize client
-      client = new SimpleMediasoupClient({
+      client = new MediasoupClient({
         roomId,
         debug: true,
         canvas: drawingCanvas,

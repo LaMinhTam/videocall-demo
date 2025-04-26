@@ -1,64 +1,50 @@
 // public/mediasoup-client.js
 class MediasoupClient {
     constructor(options) {
-      // Check if MediaSoup client is available
-      if (typeof window.mediasoupClient === 'undefined') {
-        throw new Error('MediaSoup client library not loaded');
-      }
+      // Validate required options
+      if (!options.roomId) throw new Error('roomId is required');
+      if (!options.videosContainer) throw new Error('videosContainer is required');
+      if (!options.canvas) throw new Error('canvas is required');
       
+      // Assign options
       this.options = options;
       this.debug = options.debug || false;
       this.peerId = `peer-${Math.random().toString(36).substring(2, 12)}`;
       this.roomId = options.roomId;
+      this.videosContainer = options.videosContainer;
+      this.canvas = options.canvas;
+      this.drawingContext = this.canvas.getContext('2d');
+      
+      // Set initial drawing properties
+      this.isDrawing = false;
+      this.drawColor = options.drawColor || '#000000';
+      this.drawWidth = options.drawWidth || 5;
+      this.drawingContext.strokeStyle = this.drawColor;
+      this.drawingContext.lineWidth = this.drawWidth;
+      this.drawingContext.lineCap = 'round';
+      
+      // Initialize state
       this.localStream = null;
-      this.device = null;
-      this.sendTransport = null;
-      this.recvTransport = null;
-      this.producers = new Map(); // producerId => Producer
-      this.consumers = new Map(); // consumerId => Consumer
-      this.peers = new Map(); // peerId => { video: boolean, audio: boolean }
+      this.peerConnections = {};
+      this.localVideo = null;
       
-      // Log connection attempt
-      this._log(`Connecting to room ${this.roomId} with peer ID ${this.peerId}`);
-      
-      this.socket = io('/', { 
+      // Set up socket connection
+      this.socket = io('/', {
         query: {
           roomId: this.roomId,
           peerId: this.peerId
         }
       });
       
-      // Canvas for drawing
-      this.canvas = options.canvas;
-      this.drawingContext = this.canvas.getContext('2d');
-      this.isDrawing = false;
-      this.drawColor = options.drawColor || '#000000';
-      this.drawWidth = options.drawWidth || 5;
-      
-      // Video container
-      this.videosContainer = options.videosContainer;
-      
-      // Callbacks
-      this.onConnect = options.onConnect || (() => {});
-      this.onDisconnect = options.onDisconnect || (() => {});
-      this.onPeerJoined = options.onPeerJoined || (() => {});
-      this.onPeerLeft = options.onPeerLeft || (() => {});
-      
+      // Set up event handlers
       this._setupSocketEvents();
       this._setupCanvasEvents();
+      
+      this._log('MediasoupClient initialized');
     }
     
     async init() {
       try {
-        // Load MediaSoup device
-        this.device = new window.mediasoupClient.Device();
-        
-        // Get router RTP capabilities
-        const { rtpCapabilities } = await this._request('getRouterRtpCapabilities');
-        
-        // Load the device with router RTP capabilities
-        await this.device.load({ routerRtpCapabilities: rtpCapabilities });
-        
         // Get user media
         this.localStream = await navigator.mediaDevices.getUserMedia({
           audio: true,
@@ -68,89 +54,114 @@ class MediasoupClient {
         // Create local video element
         this._createLocalVideoElement();
         
-        // Create send transport for publishing media
-        await this._createSendTransport();
+        // Send join notification
+        this.socket.emit('join', {
+          roomId: this.roomId,
+          peerId: this.peerId
+        });
         
-        // Create receive transport for consuming media
-        await this._createReceiveTransport();
+        this._log('Successfully initialized and joined room', this.roomId);
         
-        // Publish audio and video
-        await this._publish('audio');
-        await this._publish('video');
+        if (this.options.onConnect) {
+          this.options.onConnect();
+        }
         
-        this.onConnect();
-        
-        this._log('MediaSoup client initialized');
+        return true;
       } catch (error) {
-        console.error('Error initializing MediaSoup client:', error);
+        this._error('Failed to initialize:', error);
+        throw error;
       }
     }
     
-    // Socket.IO events
     _setupSocketEvents() {
+      // When connected to server
       this.socket.on('connect', () => {
-        this._log('Connected to server');
+        this._log('Connected to signaling server');
       });
       
+      // When disconnected from server
       this.socket.on('disconnect', () => {
-        this._log('Disconnected from server');
-        this.onDisconnect();
-      });
-      
-      this.socket.on('peers', async ({ peers }) => {
-        for (const peerId of peers) {
-          this.peers.set(peerId, { video: false, audio: false });
-          this.onPeerJoined(peerId);
+        this._log('Disconnected from signaling server');
+        if (this.options.onDisconnect) {
+          this.options.onDisconnect();
         }
       });
       
-      this.socket.on('new-peer', ({ peerId }) => {
-        this._log(`New peer joined: ${peerId}`);
-        this.peers.set(peerId, { video: false, audio: false });
-        this.onPeerJoined(peerId);
+      // When server reports an error
+      this.socket.on('error', (data) => {
+        this._error('Server error:', data.message);
+        alert(`Server error: ${data.message}`);
       });
       
-      this.socket.on('peer-disconnected', ({ peerId }) => {
-        this._log(`Peer disconnected: ${peerId}`);
-        this.peers.delete(peerId);
+      // When a new peer joins
+      this.socket.on('new-peer', (data) => {
+        const { peerId } = data;
+        this._log('New peer joined:', peerId);
+        this._createPeerConnection(peerId);
+        
+        if (this.options.onPeerJoined) {
+          this.options.onPeerJoined(peerId);
+        }
+      });
+      
+      // When a peer disconnects
+      this.socket.on('peer-disconnected', (data) => {
+        const { peerId } = data;
+        this._log('Peer disconnected:', peerId);
+        
+        // Clean up peer connection
+        if (this.peerConnections[peerId]) {
+          this.peerConnections[peerId].close();
+          delete this.peerConnections[peerId];
+        }
         
         // Remove video element
         const videoElement = document.getElementById(`video-${peerId}`);
         if (videoElement) {
           videoElement.remove();
-          this._updateVideoLayout();
         }
         
-        this.onPeerLeft(peerId);
-      });
-      
-      this.socket.on('new-producer', async ({ peerId, producerId, kind }) => {
-        this._log(`New producer: ${peerId}, ${kind}`);
-        await this._consume(peerId, producerId);
+        // Update video layout
+        this._updateVideoLayout();
         
-        // Update peer media info
-        const peerInfo = this.peers.get(peerId) || { video: false, audio: false };
-        peerInfo[kind] = true;
-        this.peers.set(peerId, peerInfo);
+        if (this.options.onPeerLeft) {
+          this.options.onPeerLeft(peerId);
+        }
       });
       
+      // When we get the list of existing peers
+      this.socket.on('peers', (data) => {
+        const { peers } = data;
+        this._log('Received peers list:', peers);
+        
+        // Create peer connections for existing peers
+        for (const peerId of peers) {
+          this._createPeerConnection(peerId);
+          
+          if (this.options.onPeerJoined) {
+            this.options.onPeerJoined(peerId);
+          }
+        }
+      });
+      
+      // When receiving drawing data
       this.socket.on('drawing', (data) => {
         this._drawRemotePath(data);
       });
       
-      this.socket.on('drawings', ({ drawings }) => {
+      // When receiving previous drawings
+      this.socket.on('drawings', (data) => {
+        const { drawings } = data;
         for (const drawing of drawings) {
           this._drawRemotePath(drawing);
         }
       });
     }
     
-    // Canvas drawing events
     _setupCanvasEvents() {
-      if (!this.canvas) {
-        return;
-      }
+      if (!this.canvas) return;
       
+      // Mouse down event - start drawing
       this.canvas.addEventListener('mousedown', (e) => {
         this.isDrawing = true;
         const x = e.clientX - this.canvas.offsetLeft;
@@ -170,6 +181,7 @@ class MediasoupClient {
         });
       });
       
+      // Mouse move event - continue drawing
       this.canvas.addEventListener('mousemove', (e) => {
         if (!this.isDrawing) return;
         
@@ -190,6 +202,7 @@ class MediasoupClient {
         });
       });
       
+      // Mouse up and mouse out events - stop drawing
       ['mouseup', 'mouseout'].forEach(eventName => {
         this.canvas.addEventListener(eventName, () => {
           if (this.isDrawing) {
@@ -202,18 +215,41 @@ class MediasoupClient {
           }
         });
       });
+      
+      // Touch events for mobile
+      this.canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        const mouseEvent = new MouseEvent('mousedown', {
+          clientX: touch.clientX,
+          clientY: touch.clientY
+        });
+        this.canvas.dispatchEvent(mouseEvent);
+      });
+      
+      this.canvas.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        const mouseEvent = new MouseEvent('mousemove', {
+          clientX: touch.clientX,
+          clientY: touch.clientY
+        });
+        this.canvas.dispatchEvent(mouseEvent);
+      });
+      
+      this.canvas.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        const mouseEvent = new MouseEvent('mouseup');
+        this.canvas.dispatchEvent(mouseEvent);
+      });
     }
     
-    // Send drawing data to other peers
     _sendDrawing(data) {
       this.socket.emit('drawing', data);
     }
     
-    // Draw remote path
     _drawRemotePath(data) {
-      if (!this.canvas) {
-        return;
-      }
+      if (!this.canvas) return;
       
       const ctx = this.drawingContext;
       
@@ -231,24 +267,14 @@ class MediasoupClient {
         case 'end':
           ctx.closePath();
           break;
+        case 'clear':
+          ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+          break;
       }
     }
     
-    // Helper to send socket.io request and wait for response
-    _request(type, data = {}) {
-      return new Promise((resolve, reject) => {
-        this.socket.emit(type, data, (response) => {
-          if (response.error) {
-            reject(new Error(response.error));
-          } else {
-            resolve(response);
-          }
-        });
-      });
-    }
-    
-    // Create local video element
     _createLocalVideoElement() {
+      // Create video element
       const videoElement = document.createElement('video');
       videoElement.id = 'local-video';
       videoElement.autoplay = true;
@@ -256,151 +282,161 @@ class MediasoupClient {
       videoElement.playsInline = true;
       videoElement.srcObject = this.localStream;
       
+      // Add to container
       this.videosContainer.appendChild(videoElement);
+      this.localVideo = videoElement;
+      
+      // Update layout
       this._updateVideoLayout();
     }
     
-    // Create send transport
-    async _createSendTransport() {
-      const transportInfo = await this._request('createWebRtcTransport', {
-        producing: true,
-        consuming: false
+    _createPeerConnection(peerId) {
+      if (this.peerConnections[peerId]) {
+        this._log(`Peer connection to ${peerId} already exists`);
+        return;
+      }
+      
+      this._log(`Creating peer connection to ${peerId}`);
+      
+      // Create peer connection
+      const peerConnection = new RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' }
+        ]
       });
       
-      this.sendTransport = this.device.createSendTransport({
-        id: transportInfo.id,
-        iceParameters: transportInfo.iceParameters,
-        iceCandidates: transportInfo.iceCandidates,
-        dtlsParameters: transportInfo.dtlsParameters
+      // Store peer connection
+      this.peerConnections[peerId] = peerConnection;
+      
+      // Add local stream
+      this.localStream.getTracks().forEach(track => {
+        peerConnection.addTrack(track, this.localStream);
       });
       
-      // Set transport events
-      this.sendTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
-        try {
-          await this._request('connectWebRtcTransport', {
-            transportId: this.sendTransport.id,
-            dtlsParameters
+      // Set up ICE candidate handling
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          this.socket.emit('ice-candidate', {
+            peerId: this.peerId,
+            targetPeerId: peerId,
+            candidate: event.candidate
           });
-          callback();
-        } catch (error) {
-          errback(error);
+        }
+      };
+      
+      // Set up remote stream handling
+      peerConnection.ontrack = (event) => {
+        this._log(`Received remote track from ${peerId}`);
+        this._createRemoteVideoElement(peerId, event.streams[0]);
+      };
+      
+      // Create offer if we're the initiator
+      if (this.peerId < peerId) {
+        this._createOffer(peerId, peerConnection);
+      }
+      
+      // Handle ICE connection state changes
+      peerConnection.oniceconnectionstatechange = () => {
+        this._log(`ICE connection state changed to: ${peerConnection.iceConnectionState}`);
+        
+        if (peerConnection.iceConnectionState === 'failed' || 
+            peerConnection.iceConnectionState === 'disconnected' ||
+            peerConnection.iceConnectionState === 'closed') {
+          
+          // Clean up peer connection
+          peerConnection.close();
+          delete this.peerConnections[peerId];
+          
+          // Remove video element
+          const videoElement = document.getElementById(`video-${peerId}`);
+          if (videoElement) {
+            videoElement.remove();
+            this._updateVideoLayout();
+          }
+        }
+      };
+      
+      // Handle ICE candidate messages
+      this.socket.on('ice-candidate', (data) => {
+        if (data.targetPeerId === this.peerId && data.peerId === peerId) {
+          this._log(`Received ICE candidate from ${peerId}`);
+          peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate))
+            .catch(err => this._error('Error adding ICE candidate:', err));
         }
       });
       
-      this.sendTransport.on('produce', async ({ kind, rtpParameters }, callback, errback) => {
-        try {
-          const { id } = await this._request('produce', {
-            transportId: this.sendTransport.id,
-            kind,
-            rtpParameters
-          });
-          callback({ id });
-        } catch (error) {
-          errback(error);
+      // Handle offer messages
+      this.socket.on('offer', (data) => {
+        if (data.targetPeerId === this.peerId && data.peerId === peerId) {
+          this._log(`Received offer from ${peerId}`);
+          this._handleOffer(peerId, peerConnection, data.offer);
         }
       });
-    }
-    
-    // Create receive transport
-    async _createReceiveTransport() {
-      const transportInfo = await this._request('createWebRtcTransport', {
-        producing: false,
-        consuming: true
-      });
       
-      this.recvTransport = this.device.createRecvTransport({
-        id: transportInfo.id,
-        iceParameters: transportInfo.iceParameters,
-        iceCandidates: transportInfo.iceCandidates,
-        dtlsParameters: transportInfo.dtlsParameters
-      });
-      
-      // Set transport events
-      this.recvTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
-        try {
-          await this._request('connectWebRtcTransport', {
-            transportId: this.recvTransport.id,
-            dtlsParameters
-          });
-          callback();
-        } catch (error) {
-          errback(error);
+      // Handle answer messages
+      this.socket.on('answer', (data) => {
+        if (data.targetPeerId === this.peerId && data.peerId === peerId) {
+          this._log(`Received answer from ${peerId}`);
+          this._handleAnswer(peerConnection, data.answer);
         }
       });
+      
+      return peerConnection;
     }
     
-    // Publish media
-    async _publish(kind) {
-      let track;
+    _createOffer(peerId, peerConnection) {
+      this._log(`Creating offer for ${peerId}`);
       
-      if (kind === 'audio') {
-        track = this.localStream.getAudioTracks()[0];
-      } else if (kind === 'video') {
-        track = this.localStream.getVideoTracks()[0];
-      }
-      
-      if (!track) {
-        throw new Error(`No ${kind} track`);
-      }
-      
-      const producer = await this.sendTransport.produce({
-        track,
-        encodings: kind === 'video' ? [
-          { maxBitrate: 100000 },
-          { maxBitrate: 300000 },
-          { maxBitrate: 900000 }
-        ] : undefined
-      });
-      
-      this.producers.set(producer.id, producer);
-      
-      producer.on('transportclose', () => {
-        this.producers.delete(producer.id);
-      });
-      
-      producer.on('trackended', () => {
-        this._log(`${kind} track ended`);
-        producer.close();
-        this.producers.delete(producer.id);
-      });
-      
-      return producer;
+      peerConnection.createOffer()
+        .then(offer => {
+          this._log('Created offer');
+          return peerConnection.setLocalDescription(offer);
+        })
+        .then(() => {
+          this._log('Set local description (offer)');
+          this.socket.emit('offer', {
+            peerId: this.peerId,
+            targetPeerId: peerId,
+            offer: peerConnection.localDescription
+          });
+        })
+        .catch(err => this._error('Error creating offer:', err));
     }
     
-    // Consume media
-    async _consume(peerId, producerId) {
-      const { id, kind, rtpParameters } = await this._request('consume', {
-        transportId: this.recvTransport.id,
-        producerId,
-        rtpCapabilities: this.device.rtpCapabilities
-      });
+    _handleOffer(peerId, peerConnection, offer) {
+      this._log(`Handling offer from ${peerId}`);
       
-      const consumer = await this.recvTransport.consume({
-        id,
-        producerId,
-        kind,
-        rtpParameters
-      });
-      
-      this.consumers.set(consumer.id, consumer);
-      
-      consumer.on('transportclose', () => {
-        this.consumers.delete(consumer.id);
-      });
-      
-      // Resume consumer
-      await this._request('resume-consumer', { consumerId: consumer.id });
-      
-      // If it's video, create a video element
-      if (kind === 'video') {
-        this._createRemoteVideoElement(peerId, consumer);
-      }
-      
-      return consumer;
+      peerConnection.setRemoteDescription(new RTCSessionDescription(offer))
+        .then(() => {
+          this._log('Set remote description (offer)');
+          return peerConnection.createAnswer();
+        })
+        .then(answer => {
+          this._log('Created answer');
+          return peerConnection.setLocalDescription(answer);
+        })
+        .then(() => {
+          this._log('Set local description (answer)');
+          this.socket.emit('answer', {
+            peerId: this.peerId,
+            targetPeerId: peerId,
+            answer: peerConnection.localDescription
+          });
+        })
+        .catch(err => this._error('Error handling offer:', err));
     }
     
-    // Create remote video element
-    _createRemoteVideoElement(peerId, consumer) {
+    _handleAnswer(peerConnection, answer) {
+      this._log('Handling answer');
+      
+      peerConnection.setRemoteDescription(new RTCSessionDescription(answer))
+        .catch(err => this._error('Error handling answer:', err));
+    }
+    
+    _createRemoteVideoElement(peerId, stream) {
+      this._log(`Creating video element for ${peerId}`);
+      
+      // Check if video element already exists
       let videoElement = document.getElementById(`video-${peerId}`);
       
       if (!videoElement) {
@@ -412,23 +448,55 @@ class MediasoupClient {
         this.videosContainer.appendChild(videoElement);
       }
       
-      // Create MediaStream from track
-      const stream = new MediaStream([consumer.track]);
+      // Set stream as source
       videoElement.srcObject = stream;
       
+      // Update layout
       this._updateVideoLayout();
     }
     
-    // Update video layout
     _updateVideoLayout() {
       const videos = this.videosContainer.querySelectorAll('video');
-      const width = 100 / Math.ceil(Math.sqrt(videos.length));
-      const height = 100 / Math.ceil(videos.length / Math.ceil(Math.sqrt(videos.length)));
+      const numVideos = videos.length;
       
-      for(let i = 0; i < videos.length; i++) {
-        videos[i].style.width = `calc(${width}% - 10px)`;
-        videos[i].style.height = `calc(${height}% - 10px)`;
+      if (numVideos === 0) return;
+      
+      // Calculate optimal layout
+      const screenAspectRatio = this.videosContainer.clientWidth / this.videosContainer.clientHeight;
+      const videoAspectRatio = 16 / 9; // Assume standard video aspect ratio
+      
+      let rows, cols;
+      
+      if (numVideos <= 2) {
+        rows = 1;
+        cols = numVideos;
+      } else if (numVideos <= 4) {
+        rows = 2;
+        cols = 2;
+      } else if (numVideos <= 6) {
+        rows = 2;
+        cols = 3;
+      } else if (numVideos <= 9) {
+        rows = 3;
+        cols = 3;
+      } else if (numVideos <= 12) {
+        rows = 3;
+        cols = 4;
+      } else {
+        rows = 4;
+        cols = 4;
       }
+      
+      // Calculate video dimensions
+      const width = `calc(${100 / cols}% - 10px)`;
+      const height = `calc(${100 / rows}% - 10px)`;
+      
+      // Apply layout to videos
+      videos.forEach(video => {
+        video.style.width = width;
+        video.style.height = height;
+        video.style.margin = '5px';
+      });
     }
     
     // Set drawing color
@@ -459,10 +527,14 @@ class MediasoupClient {
       }
     }
     
-    // Logger
+    // Logging utilities
     _log(...args) {
       if (this.debug) {
         console.log('[MediasoupClient]', ...args);
       }
+    }
+    
+    _error(...args) {
+      console.error('[MediasoupClient]', ...args);
     }
   }
